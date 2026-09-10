@@ -1,77 +1,83 @@
-import React from 'react';
-import { CheckCircle } from 'lucide-react';
-import MoFACrest from '../../../assets/images/Logo_crest.png';
+import { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+import { formatLongDate, fromISODate, formatSlotTime24 } from '../documentTypes';
 
-const ApplicationSubmittedSuccess = ({ onGoHome, onTrack, application }) => {
-  const applicantName = application?.personal_details?.fullName || 'Applicant';
+/**
+ * Success screen shown after "Confirm and submit" (Figma: Step 4-complete B).
+ */
+const ApplicationSubmittedSuccess = ({ application, onTrack }) => {
+  const [copied, setCopied] = useState(false);
   const appId = application?.id || 'ATT-XXXX-XXXXX';
-  const docType = application?.document_type || 'Document';
-  const tier = application?.service_tier || 'Standard';
-  const fee = tier.toLowerCase().includes('express') ? 'GHS 450' : 'GHS 200';
-  const appointmentDate = application?.appointment_details?.date || 'TBD';
-  const appointmentTime = application?.appointment_details?.time || 'TBD';
+  const appt = application?.appointment_details;
+  const apptLabel = appt?.date
+    ? `${formatLongDate(fromISODate(appt.date))} at ${formatSlotTime24(appt.time)}`
+    : 'to be confirmed';
+
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(appId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  const bullets = [
+    'Verification of your documents starts now and runs before your appointment date.',
+    `Your appointment is ${apptLabel}.`,
+    'Bring the original documents and your Ghana Card. Originals are checked against what you uploaded.',
+    'If a document fails verification we will notify you, cancel the appointment and refund your fee.',
+  ];
 
   return (
-    <div className="flex flex-col items-center justify-center py-8 px-4 animate-fade-in-up relative overflow-hidden min-h-[60vh]">
-      {/* Background Decals (from Figma pattern) */}
-      <div className="absolute inset-0 opacity-[0.02] pointer-events-none flex items-center justify-center overflow-hidden">
-        <div className="grid grid-cols-4 gap-40 rotate-[15deg] scale-150">
-          {[...Array(12)].map((_, i) => (
-            <img key={i} src={MoFACrest} className="w-32 h-32" alt="" />
-          ))}
+    <div className="animate-fade-in-up flex flex-col items-center pt-8 lg:pt-[112px] pb-24 px-2">
+      <div className="w-full max-w-[581px] p-[10px] flex flex-col items-center gap-10 lg:gap-[43px]">
+        {/* Ringed check */}
+        <div className="relative size-[71px] shrink-0" aria-hidden="true">
+          <span className="absolute inset-0 rounded-full bg-brand-green-50" />
+          <span className="absolute inset-[5px] rounded-full bg-brand-green-100" />
+          <span className="absolute inset-[11px] rounded-full bg-brand-green-200" />
+          <span className="absolute inset-[18px] rounded-full bg-brand-green-500 flex items-center justify-center">
+            <Check className="size-6 text-brand-gold-50" strokeWidth={2} />
+          </span>
         </div>
-      </div>
 
-      {/* 1. Success Icon with Rings (Reduced size) */}
-      <div className="relative mb-6">
-        <div className="size-[64px] bg-[#00875A] rounded-full flex items-center justify-center relative z-10">
-          <CheckCircle className="w-6 h-6 text-white" />
+        <div className="flex flex-col gap-[9px] text-center max-w-[411px]">
+          <h2 className="text-2xl font-semibold text-brand-navy-500">Your application has been submitted</h2>
+          <p className="text-base text-neutral-450 leading-snug">
+            An SMS has been sent to your registered number with your appointment details and reference number.
+          </p>
         </div>
-        {/* Soft mint outer rings */}
-        <div className="absolute inset-0 size-[84px] -left-[10px] -top-[10px] bg-[#00875A]/10 rounded-full" />
-        <div className="absolute inset-0 size-[104px] -left-[20px] -top-[20px] bg-[#00875A]/5 rounded-full" />
-      </div>
 
-      {/* 2. Main Heading (Reduced size) */}
-      <div className="text-center mb-8 max-w-[500px]">
-        <h1 className="text-[22px] font-bold text-[#0A1628] mb-2">Your application has been submitted</h1>
-        <p className="text-[14px] text-neutral-400 leading-snug font-medium px-4">
-          An SMS has been sent to your registered number with your appointment details and reference number.
-        </p>
-      </div>
-
-      {/* 3. Application ID Bar (More compact) */}
-      <div className="w-full max-w-[540px] bg-[#F7FCF9] border border-[#E6F4ED] rounded-[10px] p-4 mb-4 flex items-center justify-between shadow-sm shadow-emerald-900/5">
-        <span className="text-[12px] font-bold text-neutral-400 uppercase tracking-wider">APPLICATION ID</span>
-        <span className="text-[20px] font-bold text-[#0A1628]">{appId}</span>
-      </div>
-
-      {/* 4. Submission Details Card (More compact) */}
-      <div className="w-full max-w-[540px] bg-white border border-neutral-100 rounded-[10px] p-6 pb-8 shadow-[0px_4px_24px_rgba(0,0,0,0.02)] flex flex-col gap-4">
-        <h3 className="text-[12px] font-bold text-neutral-400 uppercase tracking-wider mb-1">SUBMISSION DETAILS</h3>
-        
-        <div className="flex flex-col gap-3.5">
-          <DetailRow label="Applicant" value={applicantName} />
-          <DetailRow label="Document Type" value={docType} />
-          <DetailRow label="Service tier" value={tier} />
-          <DetailRow label="Fee paid" value={fee} />
-          <DetailRow label="Payment method" value="Mobile Money / Card" />
-          <DetailRow label="Appointment" value={`${appointmentDate} at ${appointmentTime}`} />
-          
-          <div className="flex items-center justify-between pt-0.5">
-            <span className="text-[13px] text-neutral-400 font-medium">Status</span>
-            <span className="bg-[#FEF9C3] text-[#A16207] px-3.5 py-1 rounded-full text-[12px] font-bold shadow-sm">
-              Pending review
-            </span>
+        <div className="w-full min-h-[66px] rounded-[10px] border border-brand-green-100 bg-brand-green-50/20 shadow-[0_1px_10.5px_rgba(0,0,0,0.03)] pl-4 pr-6 py-3 flex items-center justify-between gap-4">
+          <span className="text-sm font-semibold uppercase text-neutral-450">Application ID</span>
+          <div className="flex items-center gap-[10px]">
+            <span className="text-xl sm:text-2xl font-semibold text-brand-navy-500 tracking-tight">{appId}</span>
+            <button
+              type="button"
+              onClick={copyId}
+              aria-label={copied ? 'Application ID copied' : 'Copy application ID'}
+              className="text-[#6f8eae] hover:text-brand-navy-500 transition-colors"
+            >
+              {copied ? <Check className="size-6" strokeWidth={1.5} /> : <Copy className="size-6" strokeWidth={1.5} />}
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* 5. Final CTA (Scaled down) */}
-      <div className="mt-8 w-full max-w-[400px]">
-        <button 
-          onClick={onTrack || onGoHome}
-          className="w-full bg-[#0A1628] hover:bg-[#111e35] text-white h-[52px] rounded-lg text-[14px] font-bold transition-all active:scale-[0.99] shadow-lg shadow-navy-900/10"
+        <ul className="w-full max-w-[426px] flex flex-col gap-[23px]">
+          {bullets.map((text) => (
+            <li key={text} className="flex items-center gap-[10px]">
+              <span className="size-[5px] rounded-full bg-brand-navy-500 shrink-0" aria-hidden="true" />
+              <span className="text-base text-neutral-450 leading-snug">{text}</span>
+            </li>
+          ))}
+        </ul>
+
+        <button
+          type="button"
+          onClick={onTrack}
+          className="w-full max-w-[466px] h-11 rounded-md bg-brand-navy-500 text-white text-sm font-semibold hover:bg-brand-navy-700 transition-colors active:scale-[0.99]"
         >
           Track my application
         </button>
@@ -79,12 +85,5 @@ const ApplicationSubmittedSuccess = ({ onGoHome, onTrack, application }) => {
     </div>
   );
 };
-
-const DetailRow = ({ label, value }) => (
-  <div className="flex items-center justify-between">
-    <span className="text-[13px] text-neutral-400 font-medium">{label}</span>
-    <span className="text-[13px] text-[#0A1628] font-bold">{value}</span>
-  </div>
-);
 
 export default ApplicationSubmittedSuccess;

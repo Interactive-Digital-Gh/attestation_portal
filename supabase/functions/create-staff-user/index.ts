@@ -1,5 +1,20 @@
-/// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
-/// <reference types="https://esm.sh/v135/@types/deno@2/index.d.ts" />
+// @ts-types is not needed at deploy time — Deno globals are available in the runtime.
+// To fully resolve Deno types in your IDE, install the official "Deno" VS Code extension
+// and create a .vscode/settings.json that scopes it to this folder (see below).
+
+
+
+// deno-lint-ignore-file
+/* eslint-disable @typescript-eslint/no-namespace */
+declare namespace Deno {
+  export interface Env {
+    get(key: string): string | undefined;
+  }
+  export const env: Env;
+  export function serve(
+    handler: (req: Request) => Response | Promise<Response>,
+  ): void;
+}
 
 import { createClient } from "@supabase/supabase-js";
 

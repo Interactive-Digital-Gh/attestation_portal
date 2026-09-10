@@ -1,39 +1,14 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
-const AuthContext = createContext({});
+// Exported so dev previews/tests can provide a mock session.
+// eslint-disable-next-line react-refresh/only-export-components
+export const AuthContext = createContext({});
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check active sessions and sets the user
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchProfile(session.user.id);
-      }
-      setLoading(false);
-    };
-
-    getSession();
-
-    // Listen for changes on auth state (sign in, sign out, etc.)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        await fetchProfile(session.user.id);
-      } else {
-        setProfile(null);
-      }
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   const fetchProfile = async (userId, retries = 1) => {
     const fallbackProfile = () => {
@@ -101,6 +76,41 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    // onAuthStateChange fires INITIAL_SESSION on subscribe, so it covers the
+    // initial bootstrap as well as later sign-in / sign-out events.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+
+      if (!session?.user) {
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      // A token refresh does not change the profile; avoid a needless refetch.
+      if (event === 'TOKEN_REFRESHED') return;
+
+      // IMPORTANT: never await Supabase calls inside this callback. It runs while
+      // the client holds its auth lock, and any query would block on that lock
+      // until it timed out. Defer to the next tick so the lock is released first.
+      const userId = session.user.id;
+      setTimeout(() => {
+        if (cancelled) return;
+        fetchProfile(userId).finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      }, 0);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
   const signOut = () => supabase.auth.signOut();
 
   return (
@@ -110,4 +120,5 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

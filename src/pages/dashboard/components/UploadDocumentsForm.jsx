@@ -1,286 +1,294 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, ChevronDown, UploadCloud, Trash2, FileText, AlertCircle, ExternalLink } from 'lucide-react';
-import SupremeSeal from '../../../assets/images/Vector.svg';
+import { useState, useRef, useEffect } from 'react';
+import { ChevronDown, ImageUp, Trash2, Loader } from 'lucide-react';
+import SupremeCourtSeal from '../../../assets/images/supreme_court_seal.png';
+import PdfIcon from '../../../assets/images/pdf_icon.svg';
+import { FieldLabel, SectionLabel, PrimaryButton, InfoBanner, Badge, StepFooter } from './ui';
+import {
+  DOCUMENT_TYPES,
+  DOCUMENT_STATUS,
+  OFFICER_VERIFICATION_DAYS,
+  formatFileSize,
+  requiresOfficerVerification,
+} from '../documentTypes';
 
-const UploadDocumentsForm = ({ onSave, onProgressUpdate, initialData }) => {
-  const [agreed, setAgreed] = useState(initialData?.uploadedDocs?.length > 0);
-  const [selectedType, setSelectedType] = useState(initialData?.selectedType || 'Birth certificate');
-  const [uploadedDocs, setUploadedDocs] = useState(initialData?.uploadedDocs || []);
-  const [error, setError] = useState(null);
+const MAX_DOCS = 5;
+const MAX_BYTES = 10 * 1024 * 1024;
+/** Simulated client-side check; the seal check proper runs after submission. */
+const CHECK_DELAY_MS = 1400;
 
-  const fileInputRef = useRef(null);
-  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const readyStatus = (doc) => (requiresOfficerVerification(doc) ? DOCUMENT_STATUS.QUEUED : DOCUMENT_STATUS.ACCEPTED);
 
-  // Calculate progress
-  useEffect(() => {
-    let progress = 0;
-    if (uploadedDocs.length > 0) progress += 50;
-    if (agreed) progress += 50;
-    
-    if (onProgressUpdate) {
-      onProgressUpdate(progress);
-    }
-  }, [uploadedDocs, agreed, onProgressUpdate]);
-
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError('File size exceeds 5MB limit.');
-      return;
-    }
-
-    if (uploadedDocs.length >= 5) {
-      setError('Maximum 5 documents per submission.');
-      return;
-    }
-
-    const newDoc = {
-      id: Date.now(),
-      type: selectedType,
-      name: file.name,
-      size: (file.size / (1024 * 1024)).toFixed(2) + ' MB',
-      file: file 
-    };
-
-    setUploadedDocs([...uploadedDocs, newDoc]);
-    setError(null);
-    e.target.value = ''; 
-  };
-
-  const handleDelete = (id) => {
-    setUploadedDocs(uploadedDocs.filter(doc => doc.id !== id));
-  };
-
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleSave = () => {
-    onSave({ uploadedDocs, selectedType });
-  };
-
-  const currentProgress = (uploadedDocs.length > 0 ? 50 : 0) + (agreed ? 50 : 0);
-
-  return (
-    <div className="w-full bg-white animate-fade-in px-1">
-      {/* Step Header */}
-      <div className="flex items-start gap-4 mb-8 bg-emerald-50/10 p-4 rounded-xl border border-emerald-50/50">
-        <div className="w-[52px] h-[52px] bg-emerald-50 border border-emerald-100 rounded-lg flex items-center justify-center shrink-0">
-          <Paperclip className="w-6 h-6 text-emerald-800" />
+const DocumentCard = ({ doc, onRemove }) => (
+  <div className="bg-white border border-neutral-100 rounded-[10px] shadow-[0_1px_5.25px_rgba(0,0,0,0.03)] pt-[10px] pb-[17px] px-4 sm:px-[27px] flex items-center justify-between gap-4">
+    <div className="flex flex-col items-start min-w-0">
+      <div className="flex items-center gap-[5px] min-w-0">
+        <div className="size-[55px] flex items-center justify-center shrink-0">
+          <img src={PdfIcon} alt="" className="size-8" />
         </div>
-        <div className="flex flex-col gap-1 pt-0.5 w-full">
-          <div className="flex items-center gap-2">
-            <span className="text-emerald-800 text-[14px] font-bold">Step 2: Upload documents</span>
-          </div>
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mt-1">
-            <p className="text-[11px] text-neutral-400 max-w-lg leading-tight">
-              Add all the documents you need attested. Each document needs its own seal confirmation. Max <span className="font-bold text-neutral-600">5 documents</span>.
-            </p>
-            <div className="flex items-center gap-3">
-              <div className="w-32 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-800 transition-all duration-500" style={{ width: `${currentProgress}%` }} />
-              </div>
-              <span className="text-neutral-400 text-[12px] font-bold">{currentProgress}%</span>
-            </div>
-          </div>
+        <div className="flex flex-col gap-[5px] min-w-0 text-[11px]">
+          <span className="font-semibold text-neutral-500 truncate">{doc.type}</span>
+          <span className="flex items-center gap-3 text-neutral-450 min-w-0">
+            <span className="truncate">{doc.name}</span>
+            <span className="shrink-0">{doc.sizeLabel}</span>
+          </span>
         </div>
       </div>
-
-      {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 text-red-600 text-sm animate-shake">
-          <AlertCircle className="w-5 h-5" />
-          <span className="font-medium">{error}</span>
+      {doc.status === DOCUMENT_STATUS.CHECKING ? (
+        <div className="flex items-center gap-1.5 pl-[62px] text-sm font-medium text-brand-navy-500">
+          <Loader className="size-6 animate-spin" strokeWidth={1.5} />
+          checking...
         </div>
+      ) : (
+        <Badge variant={doc.status === DOCUMENT_STATUS.ACCEPTED ? 'accepted' : 'queued'}>{doc.status}</Badge>
       )}
+    </div>
+    <button
+      type="button"
+      onClick={onRemove}
+      aria-label={`Remove ${doc.name}`}
+      className="text-neutral-400 hover:text-brand-red-500 transition-colors shrink-0"
+    >
+      <Trash2 className="size-6" strokeWidth={1.5} />
+    </button>
+  </div>
+);
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 xl:gap-20 2xl:gap-32 mb-10 xl:mb-16">
-        <div className="flex flex-col gap-8">
-          <div className="w-full p-6 border border-neutral-100 rounded-2xl bg-neutral-50/30">
-            <div className="flex flex-col gap-2 mb-8">
-              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Document Type</label>
-              <div className="relative group">
-                <select 
-                  value={selectedType}
-                  onChange={(e) => setSelectedType(e.target.value)}
-                  className="w-full h-11 px-4 bg-white rounded-lg border border-neutral-200 outline-none text-sm appearance-none cursor-pointer text-neutral-700 font-medium"
-                >
-                  <option value="Birth certificate">Birth certificate</option>
-                  <option value="Admission letter">Admission letter</option>
-                  <option value="Passport bio data">Bio data of passport</option>
-                  <option value="Result slip">Result slip</option>
-                  <option value="Marriage Certificate">Marriage Certificate</option>
-                  <option value="Police Clearance">Police Clearance</option>
-                </select>
-                <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
-                  <ChevronDown className="w-3 h-3" />
-                </div>
-              </div>
+/**
+ * Step 2 — Upload documents.
+ * Pick a document type, drop a scan, and the file is listed under
+ * "Checked on upload" or "Officer verification queue" depending on its type.
+ */
+const UploadDocumentsForm = ({ initialData = [], onSave, onProgressUpdate }) => {
+  const [selectedType, setSelectedType] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [docs, setDocs] = useState(() =>
+    initialData.map((d) => ({ ...d, status: d.status === DOCUMENT_STATUS.CHECKING ? readyStatus(d) : d.status }))
+  );
+  const [error, setError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const fileRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const timers = useRef({});
+
+  // Close the type dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onClick = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setIsOpen(false);
+    };
+    const onKey = (e) => e.key === 'Escape' && setIsOpen(false);
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen]);
+
+  // Clear any pending "checking" timers on unmount.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => Object.values(pending).forEach(clearTimeout);
+  }, []);
+
+  const checking = docs.some((d) => d.status === DOCUMENT_STATUS.CHECKING);
+  const progress = docs.length === 0 ? 0 : checking ? 50 : 100;
+
+  useEffect(() => {
+    onProgressUpdate?.(progress);
+  }, [progress, onProgressUpdate]);
+
+  const addFile = (file) => {
+    if (!file) return;
+    if (!selectedType) {
+      setError('Choose a document type before uploading.');
+      return;
+    }
+    if (docs.length >= MAX_DOCS) {
+      setError(`You can attach up to ${MAX_DOCS} documents per submission.`);
+      return;
+    }
+    if (!/^image\//.test(file.type) && file.type !== 'application/pdf') {
+      setError('Upload a PDF, JPG or PNG file.');
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      setError('File is larger than 10MB.');
+      return;
+    }
+    setError('');
+
+    const def = DOCUMENT_TYPES.find((t) => t.value === selectedType);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const doc = {
+      id,
+      type: selectedType,
+      verification: def?.verification || 'upload',
+      name: file.name,
+      size: file.size,
+      sizeLabel: formatFileSize(file.size),
+      file,
+      status: DOCUMENT_STATUS.CHECKING,
+    };
+    setDocs((prev) => [...prev, doc]);
+    timers.current[id] = setTimeout(() => {
+      setDocs((prev) => prev.map((d) => (d.id === id ? { ...d, status: readyStatus(d) } : d)));
+      delete timers.current[id];
+    }, CHECK_DELAY_MS);
+  };
+
+  const removeDoc = (id) => {
+    clearTimeout(timers.current[id]);
+    delete timers.current[id];
+    setDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const uploadChecked = docs.filter((d) => !requiresOfficerVerification(d));
+  const officerQueue = docs.filter(requiresOfficerVerification);
+  const canContinue = docs.length > 0 && !checking;
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,523px)_minmax(0,1fr)] gap-8 lg:gap-[33px]">
+        {/* Left column */}
+        <div className="flex flex-col gap-[22px]">
+          <div className="flex items-center gap-4 sm:gap-[21px]">
+            <img
+              src={SupremeCourtSeal}
+              alt="Example of the Supreme Court seal"
+              className="w-[112px] h-[115px] object-contain shrink-0"
+            />
+            <div className="flex flex-col gap-3 max-w-[395px]">
+              <p className="text-xs font-bold text-neutral-500">Confirm the Supreme Court seal is present</p>
+              <p className="text-xs text-neutral-500 leading-relaxed">
+                The Supreme Court or Judicial Service Registry stamp must be clearly visible before you upload.
+              </p>
             </div>
+          </div>
 
-            <div className="flex items-center gap-5 mb-8">
-              <div className="w-24 h-24 shrink-0">
-                <img src={SupremeSeal} className="w-full h-full object-contain opacity-70" alt="Supreme Court Seal" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[12px] font-bold text-neutral-700">Confirm the Supreme Court seal is present</span>
-                <p className="text-[11px] text-neutral-400 leading-relaxed">
-                  The Supreme Court stamp must be visible before you upload.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2 mb-8">
-              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">File Upload</label>
-              <div 
-                onClick={handleUploadClick}
-                className="w-full h-32 border-2 border-dashed border-brand-gold-500 rounded-xl flex flex-col items-center justify-center gap-2 bg-white cursor-pointer hover:bg-brand-gold-50/30 transition-all group"
+          <div className="flex flex-col gap-[9px]" ref={dropdownRef}>
+            <FieldLabel>Document type</FieldLabel>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsOpen((o) => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={isOpen}
+                className="w-full h-11 rounded-md border border-neutral-200 bg-white pl-4 pr-[15px] flex items-center justify-between text-sm hover:border-neutral-300 focus:border-brand-navy-400 outline-none transition-colors"
               >
-                <UploadCloud className="w-6 h-6 text-brand-gold-500 group-hover:scale-110 transition-transform" />
-                <div className="flex flex-col items-center">
-                  <span className="text-brand-gold-500 text-[13px] font-bold">Click to upload document scan</span>
-                  <span className="text-neutral-300 text-[11px]">PDF, JPG or PNG  Max 5MB</span>
-                </div>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleFileChange}
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  className="hidden" 
+                <span className={selectedType ? 'text-neutral-600' : 'text-neutral-300'}>
+                  {selectedType || 'Select document type'}
+                </span>
+                <ChevronDown
+                  className={`size-6 text-neutral-400 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                  strokeWidth={1.5}
                 />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-4">
-              <button 
-                onClick={handleUploadClick}
-                disabled={uploadedDocs.length >= 5}
-                className={`w-full h-12 rounded-lg text-sm font-bold transition-all shadow-sm ${
-                  uploadedDocs.length < 5 
-                    ? 'bg-brand-navy-800 text-white hover:bg-brand-navy-900' 
-                    : 'bg-neutral-100 text-neutral-400 cursor-not-allowed'
-                }`}
-              >
-                Add another document
               </button>
-
-              <div className="relative flex items-center gap-4 py-2">
-                <div className="flex-grow h-px bg-neutral-100"></div>
-                <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-widest">OR</span>
-                <div className="flex-grow h-px bg-neutral-100"></div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2 mb-1">
-                  <ExternalLink className="w-3.5 h-3.5 text-neutral-400" />
-                  <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider">Add external link (Fallback)</span>
-                </div>
-                <div className="flex gap-2">
-                  <input 
-                    type="url"
-                    placeholder="https://third-party-storage.com/file.pdf"
-                    id="external-link-input"
-                    className="flex-grow h-10 px-4 bg-white rounded-lg border border-neutral-200 outline-none text-sm placeholder:text-neutral-300 focus:border-brand-gold-300 transition-colors"
-                  />
-                  <button 
-                    onClick={() => {
-                      const input = document.getElementById('external-link-input');
-                      const url = input.value;
-                      if (!url) return;
-                      
-                      const newDoc = {
-                        id: Date.now(),
-                        type: selectedType,
-                        name: 'External Document',
-                        url: url,
-                        size: 'N/A'
-                      };
-                      setUploadedDocs([...uploadedDocs, newDoc]);
-                      input.value = '';
-                    }}
-                    disabled={uploadedDocs.length >= 5}
-                    className="px-4 h-10 bg-neutral-50 hover:bg-neutral-100 text-brand-navy-800 rounded-lg text-[12px] font-bold border border-neutral-200 transition-all active:scale-95 whitespace-nowrap"
-                  >
-                    Add Link
-                  </button>
-                </div>
-              </div>
+              {isOpen && (
+                <ul
+                  role="listbox"
+                  className="absolute left-0 right-0 top-[calc(100%+9px)] z-20 bg-white border border-neutral-200 rounded-lg shadow-[0_1px_3px_rgba(10,22,40,0.06),0_4px_12px_rgba(10,22,40,0.12)] py-1 overflow-hidden"
+                >
+                  {DOCUMENT_TYPES.map((t) => (
+                    <li key={t.value} role="option" aria-selected={selectedType === t.value}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedType(t.value);
+                          setIsOpen(false);
+                          setError('');
+                        }}
+                        className={`w-full h-11 px-4 text-left text-sm text-neutral-600 transition-colors hover:bg-neutral-50 hover:font-semibold ${
+                          selectedType === t.value ? 'bg-neutral-50 font-semibold' : ''
+                        }`}
+                      >
+                        {t.value}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
+          </div>
+
+          <div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,image/*"
+              className="hidden"
+              onChange={(e) => {
+                addFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label="Upload document scan"
+              onClick={() => fileRef.current?.click()}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                addFile(e.dataTransfer.files?.[0]);
+              }}
+              className={`h-[129px] rounded-lg border-[1.5px] border-dashed border-brand-gold-500 flex flex-col items-center justify-center gap-[3px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-gold-600/40 ${
+                isDragging ? 'bg-brand-gold-50' : 'bg-brand-gold-50/16 hover:bg-brand-gold-50/40'
+              }`}
+            >
+              <ImageUp className="size-6 text-brand-gold-700" strokeWidth={1.5} />
+              <span className="text-xs font-medium text-neutral-450">Click to upload or drag &amp; drop</span>
+              <span className="text-[10px] text-neutral-450">PDF, JPG or PNG&nbsp;&nbsp;Max 10MB</span>
+            </div>
+            {error && <p className="mt-2 text-[11px] text-brand-red-500">{error}</p>}
           </div>
         </div>
 
-        <div className="flex flex-col gap-4">
-          {uploadedDocs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 bg-neutral-50/20 rounded-2xl border-2 border-dashed border-neutral-100 opacity-60">
-              <FileText className="w-10 h-10 text-neutral-200 mb-2" />
-              <p className="text-neutral-400 text-xs font-medium">No documents added yet</p>
+        {/* Right column */}
+        <div className="flex flex-col gap-[14px]">
+          {docs.length === 0 ? (
+            <div className="rounded-lg border-[1.5px] border-dashed border-neutral-200 bg-white pt-[38px] pb-[34px] px-6 text-center text-xs text-neutral-300">
+              No documents yet. Choose a type and upload a scan to begin.
             </div>
           ) : (
-            uploadedDocs.map((doc) => (
-              <div key={doc.id} className="w-full p-4 bg-white border border-neutral-100 rounded-xl flex items-center justify-between group hover:border-neutral-200 transition-all shadow-sm animate-fade-in-up">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-neutral-50 rounded-lg flex items-center justify-center">
-                     <FileText className="w-5 h-5 opacity-40 text-neutral-400" />
-                  </div>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[13px] font-bold text-neutral-800 tracking-tight">{doc.type}</span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[11px] text-neutral-300 font-medium truncate max-w-[150px]">{doc.name}</span>
-                      <span className="text-[11px] text-neutral-300 font-medium">{doc.size}</span>
-                    </div>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => handleDelete(doc.id)}
-                  className="w-9 h-9 flex items-center justify-center rounded-full text-neutral-300 hover:text-red-500 hover:bg-red-50 transition-all"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-              </div>
-            ))
+            <>
+              {uploadChecked.length > 0 && (
+                <>
+                  <SectionLabel>Checked on upload</SectionLabel>
+                  {uploadChecked.map((d) => (
+                    <DocumentCard key={d.id} doc={d} onRemove={() => removeDoc(d.id)} />
+                  ))}
+                </>
+              )}
+              {officerQueue.length > 0 && (
+                <>
+                  <SectionLabel>Officer verification queue</SectionLabel>
+                  <InfoBanner center className="py-[10px]">
+                    These documents are confirmed with the institutions that issued them.
+                    <br />
+                    Allow at least {OFFICER_VERIFICATION_DAYS} working days. Your earliest appointment date reflects this.
+                  </InfoBanner>
+                  {officerQueue.map((d) => (
+                    <DocumentCard key={d.id} doc={d} onRemove={() => removeDoc(d.id)} />
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* Confirmation Section */}
-      <div className="flex flex-col gap-8 border-t border-neutral-50 pt-8">
-        <div className="flex flex-col gap-2 max-w-2xl">
-          <h4 className="text-[12px] font-bold text-neutral-500 uppercase tracking-wider">Confirm your submission</h4>
-          <label className="flex items-start gap-3 cursor-pointer group mt-2">
-            <input 
-              type="checkbox"
-              checked={agreed}
-              onChange={(e) => setAgreed(e.target.checked)}
-              className="hidden"
-            />
-            <div className={`mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 transition-all flex items-center justify-center ${agreed ? 'border-brand-gold-500 bg-brand-gold-500' : 'border-neutral-200 bg-white group-hover:border-brand-gold-500'}`}>
-              {agreed && (
-                <svg className="w-3 h-3 text-brand-navy-900 fill-current" viewBox="0 0 20 20">
-                  <path d="M0 11l2-2 5 5L18 3l2 2L7 18z" />
-                </svg>
-              )}
-            </div>
-            <p className="text-[11px] text-neutral-400 leading-relaxed font-medium">
-              I confirm all documents listed bear the Supreme Court seal and I accept legal accountability.
-            </p>
-          </label>
-        </div>
-
-        <div className="flex justify-end pt-4 mb-4">
-          <button 
-            onClick={handleSave}
-            disabled={!agreed || uploadedDocs.length === 0}
-            className={`px-10 py-3 rounded-lg text-sm font-bold transition-all shadow-sm active:scale-95 ${
-              (agreed && uploadedDocs.length > 0)
-                ? 'bg-brand-gold-500 hover:bg-brand-gold-600 text-brand-navy-800' 
-                : 'bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none'
-            }`}
-          >
-            Save & continue
-          </button>
-        </div>
-      </div>
+      <StepFooter className="mt-8 md:mt-[50px]">
+        <PrimaryButton disabled={!canContinue} onClick={() => onSave(docs)}>
+          Continue to payments
+        </PrimaryButton>
+      </StepFooter>
     </div>
   );
 };

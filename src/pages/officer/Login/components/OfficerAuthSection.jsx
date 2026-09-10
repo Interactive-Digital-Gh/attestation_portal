@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Loader2, X, CheckCircle2 } from 'lucide-react';
-import { supabase } from '../../../../supabaseClient';
+import { supabase, signInResilient, signOutQuietly } from '../../../../supabaseClient';
 import LogoCrest from '../../../../assets/images/Logo_crest.png';
 
 const OfficerAuthSection = () => {
@@ -21,10 +21,9 @@ const OfficerAuthSection = () => {
 
     try {
       // Authenticate with Supabase
-      const { data, error: loginError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error: loginError } = await signInResilient(() =>
+        supabase.auth.signInWithPassword({ email, password })
+      );
 
       if (loginError) throw loginError;
 
@@ -40,13 +39,13 @@ const OfficerAuthSection = () => {
         .single();
 
       if (profileError || !profile) {
-        await supabase.auth.signOut();
+        await signOutQuietly();
         throw new Error('Could not verify your account role. Contact IT support.');
       }
 
       const allowedRoles = ['officer', 'director'];
       if (!allowedRoles.includes(profile.role)) {
-        await supabase.auth.signOut();
+        await signOutQuietly();
         throw new Error('Unauthorized — this portal is for MOFA staff (Officers & Directors) only.');
       }
 

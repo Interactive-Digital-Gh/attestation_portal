@@ -1,278 +1,243 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Calendar, ChevronDown, Upload, FileText } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { CalendarDays, ImageUp, Trash2 } from 'lucide-react';
+import { FieldLabel, TextInput, PrimaryButton, PhonePrefix, StepFooter } from './ui';
+import { formatFileSize, toISODate } from '../documentTypes';
 
-const PersonalDetailsForm = ({ onSave, onProgressUpdate, initialData }) => {
-  const [formData, setFormData] = useState({
-    fullName: initialData?.fullName || '',
-    phoneNumber: initialData?.phoneNumber || '',
-    dob: initialData?.dob || '',
-    ghanaCardNumber: initialData?.ghanaCardNumber || '',
-    ghanaCardPhoto: initialData?.ghanaCardPhoto || null,
-    agreed: initialData?.agreed || false
-  });
-  const [ghanaCardError, setGhanaCardError] = useState('');
-  const dateInputRef = useRef(null);
-  const fileInputRef = useRef(null);
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+const GHANA_CARD_RE = /^GHA-\d{9}-\d$/;
 
-  const isGhanaCardValid = (value) => /^GHA-\d{9}-\d$/.test(value);
+/** "+233548902177" -> "548902177" */
+const localDigits = (phone = '') => (phone || '').replace(/\D/g, '').replace(/^233/, '').replace(/^0/, '');
 
-  // Calculate progress based on filled fields
-  useEffect(() => {
-    const fields = [
-      formData.fullName,
-      formData.phoneNumber,
-      formData.dob,
-      isGhanaCardValid(formData.ghanaCardNumber), // only counts if format is correct
-      formData.ghanaCardPhoto,
-      formData.agreed
+/**
+ * Step 1 — Complete profile.
+ * For "Myself" applications the name and phone come from the account profile
+ * and are shown read-only; for "Someone else" they describe the beneficiary.
+ */
+const PersonalDetailsForm = ({ initialData, onSave, onProgressUpdate, applicantType = 'self', profile, user }) => {
+  const isSelf = applicantType === 'self';
+  const profileName = profile?.full_name || user?.user_metadata?.full_name || '';
+  const profilePhone = profile?.phone_number || user?.phone || user?.user_metadata?.phone || '';
+
+  const [form, setForm] = useState(() => ({
+    fullName: initialData?.fullName ?? (isSelf ? profileName : ''),
+    phoneLocal: initialData?.phoneLocal ?? localDigits(isSelf ? profilePhone : ''),
+    dob: initialData?.dob ?? '',
+    ghanaCardNumber: initialData?.ghanaCardNumber ?? '',
+    ghanaCardPhoto: initialData?.ghanaCardPhoto ?? null,
+  }));
+  const [photoError, setPhotoError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const dateRef = useRef(null);
+  const fileRef = useRef(null);
+
+  const nameLocked = isSelf && !!profileName;
+  const phoneLocked = isSelf && !!localDigits(profilePhone);
+
+  const cardValid = GHANA_CARD_RE.test(form.ghanaCardNumber);
+  const cardTouched = form.ghanaCardNumber.length > 0;
+
+  const progress = useMemo(() => {
+    const checks = [
+      form.fullName.trim().length > 1,
+      form.phoneLocal.length >= 9,
+      !!form.dob,
+      cardValid,
+      !!form.ghanaCardPhoto,
     ];
-    const filledFields = fields.filter(field => {
-      if (typeof field === 'boolean') return field === true;
-      return field !== null && field !== '';
-    }).length;
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+  }, [form, cardValid]);
 
-    const progress = Math.round((filledFields / fields.length) * 100);
-    if (onProgressUpdate) {
-      onProgressUpdate(progress);
+  useEffect(() => {
+    onProgressUpdate?.(progress);
+  }, [progress, onProgressUpdate]);
+
+  const update = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const acceptFile = (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type) && file.type !== 'application/pdf') {
+      setPhotoError('Upload a PDF, JPG or PNG file.');
+      return;
     }
-  }, [formData, onProgressUpdate]);
-
-  const handleInputChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    const newValue = type === 'checkbox' ? checked : value;
-    setFormData(prev => ({ ...prev, [name]: newValue }));
-
-    if (name === 'ghanaCardNumber') {
-      if (value && !isGhanaCardValid(value)) {
-        setGhanaCardError('Format must be GHA-XXXXXXXXX-X (9 digits, then 1 digit)');
-      } else {
-        setGhanaCardError('');
-      }
+    if (file.size > MAX_PHOTO_BYTES) {
+      setPhotoError('File is larger than 10MB.');
+      return;
     }
+    setPhotoError('');
+    update('ghanaCardPhoto', { file, name: file.name, size: file.size, sizeLabel: formatFileSize(file.size) });
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setFormData(prev => ({
-        ...prev,
-        ghanaCardPhoto: {
-          file: file,
-          name: file.name,
-          size: (file.size / (1024 * 1024)).toFixed(2) + ' MB'
-        }
-      }));
-    }
-  };
+  const handleSave = () =>
+    onSave({
+      fullName: form.fullName.trim(),
+      phoneNumber: form.phoneLocal ? `+233${form.phoneLocal}` : '',
+      phoneLocal: form.phoneLocal,
+      dob: form.dob,
+      ghanaCardNumber: form.ghanaCardNumber.toUpperCase(),
+      ghanaCardPhoto: form.ghanaCardPhoto,
+    });
 
-  const removeFile = (e) => {
-    e.stopPropagation();
-    setFormData(prev => ({ ...prev, ghanaCardPhoto: null }));
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const triggerDatePicker = () => {
-    if (dateInputRef.current) {
-      dateInputRef.current.showPicker();
-    }
-  };
-
-  const triggerFileSelect = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  // Helper to get current progress for UI
-  const calculateInternalProgress = () => {
-    const fields = [formData.fullName, formData.phoneNumber, formData.dob, isGhanaCardValid(formData.ghanaCardNumber), formData.ghanaCardPhoto, formData.agreed];
-    const filled = fields.filter(f => typeof f === 'boolean' ? f : (f !== null && f !== '')).length;
-    return Math.round((filled / fields.length) * 100);
-  };
-
-  const currentProgress = calculateInternalProgress();
+  const dobDisplay = form.dob ? form.dob.split('-').reverse().join(' / ') : 'DD / MM / YYYY';
+  const today = toISODate(new Date());
 
   return (
-    <div className="w-full bg-white animate-fade-in px-1">
-      {/* Step Header */}
-      <div className="flex items-start gap-4 mb-6">
-        <div className="w-[52px] h-[52px] bg-brand-gold-50/50 border border-brand-gold-200 rounded-lg flex items-center justify-center shrink-0">
-          <FileText className="w-6 h-6 text-brand-gold-500" />
-        </div>
-        <div className="flex flex-col gap-1 pt-0.5">
-          <div className="flex items-center gap-2">
-            <span className="text-neutral-500 text-[13px] font-medium">Step 1:</span>
-            <span className="text-brand-navy-800 text-[15px] font-bold">Complete profile</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="w-32 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-emerald-800 transition-all duration-500 ease-out" 
-                style={{ width: `${currentProgress}%` }}
-              />
-            </div>
-            <span className="text-neutral-400 text-[12px] font-bold">{currentProgress}%</span>
-          </div>
-        </div>
-      </div>
+    <div>
+      {!isSelf && (
+        <p className="text-xs text-neutral-500 mb-4 -mt-1">
+          Enter the details of the person the documents belong to. Their Ghana Card is checked at the appointment.
+        </p>
+      )}
 
-      {/* Form Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 xl:gap-x-14 gap-y-5">
-        {/* Left Column */}
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Full Name</label>
-            <input 
-              type="text" 
-              name="fullName"
-              value={formData.fullName}
-              onChange={handleInputChange}
-              placeholder="Ama Dziedzom Barnor" 
-              className="w-full h-10 px-4 bg-neutral-50 rounded-lg border border-neutral-100 outline-none text-sm placeholder:text-neutral-300 focus:border-brand-gold-300 transition-colors"
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-[19px] gap-y-[22px]">
+        {/* Left column */}
+        <div className="flex flex-col gap-[22px]">
+          <div className="flex flex-col gap-[9px]">
+            <FieldLabel htmlFor="pd-fullName">Full name</FieldLabel>
+            <TextInput
+              id="pd-fullName"
+              readOnly={nameLocked}
+              value={form.fullName}
+              onChange={(e) => update('fullName', e.target.value)}
+              placeholder="Ama Dziedzom Barnor"
+              autoComplete="name"
             />
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex flex-col gap-1.5 flex-grow">
-              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Phone Number</label>
-              <div className="flex items-center gap-2 px-3 h-10 bg-neutral-50 rounded-lg border border-neutral-100 focus-within:border-brand-gold-300 transition-colors">
-                <span className="text-base leading-none">🇬🇭</span>
-                <span className="text-[13px] text-neutral-500">+233</span>
-                <ChevronDown className="w-3 h-3 opacity-30" />
-                <div className="w-px h-4 bg-neutral-200 mx-0.5" />
-                <input 
-                  type="text" 
-                  name="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={handleInputChange}
-                  placeholder="548902177" 
-                  className="bg-transparent outline-none text-sm placeholder:text-neutral-300 w-full"
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5 sm:w-[160px]">
-              <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Date of Birth</label>
-              <div className="relative group h-10 cursor-pointer" onClick={triggerDatePicker}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-[14px]">
+            <div className="flex flex-col gap-[9px]">
+              <FieldLabel htmlFor="pd-phone">Phone number</FieldLabel>
+              <div
+                className={`flex h-11 rounded-md border overflow-hidden ${
+                  phoneLocked ? 'border-neutral-200 bg-neutral-100' : 'border-neutral-300 bg-white focus-within:border-brand-navy-400'
+                }`}
+              >
+                <PhonePrefix muted={phoneLocked} />
                 <input
-                  ref={dateInputRef}
-                  type="date"
-                  name="dob"
-                  value={formData.dob}
-                  onChange={handleInputChange}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                  id="pd-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  readOnly={phoneLocked}
+                  tabIndex={phoneLocked ? -1 : undefined}
+                  value={form.phoneLocal}
+                  onChange={(e) => update('phoneLocal', e.target.value.replace(/\D/g, '').slice(0, 9))}
+                  placeholder="548902177"
+                  className={`flex-1 min-w-0 h-full px-3 text-sm outline-none bg-transparent placeholder:text-neutral-300 ${
+                    phoneLocked ? 'text-neutral-500 cursor-default' : 'text-neutral-700'
+                  }`}
                 />
-                <div className="w-full h-full px-4 bg-white rounded-lg border border-neutral-200 flex items-center text-sm text-neutral-800 transition-colors group-hover:border-brand-gold-400">
-                  {formData.dob ? new Date(formData.dob).toLocaleDateString('en-GB') : <span className="text-neutral-300 tracking-wider">DD / MM / YYYY</span>}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-[9px]">
+              <FieldLabel htmlFor="pd-dob">Date of birth</FieldLabel>
+              <div
+                className="relative h-11 rounded-md border border-neutral-300 bg-white overflow-hidden flex focus-within:border-brand-navy-400 cursor-pointer"
+                onClick={() => dateRef.current?.showPicker?.()}
+              >
+                <input
+                  ref={dateRef}
+                  id="pd-dob"
+                  type="date"
+                  max={today}
+                  value={form.dob}
+                  onChange={(e) => update('dob', e.target.value)}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                />
+                <div className={`flex-1 flex items-center px-4 text-sm tracking-[1.5px] ${form.dob ? 'text-neutral-700' : 'text-neutral-400'}`}>
+                  {dobDisplay}
                 </div>
-                <div className="absolute right-0 top-0 h-full w-10 flex items-center justify-center bg-neutral-50 border-l border-neutral-200 rounded-r-lg z-10">
-                  <Calendar className="w-3.5 h-3.5 opacity-40" />
+                <div className="w-11 h-full bg-neutral-100 border-l border-neutral-300 flex items-center justify-center shrink-0">
+                  <CalendarDays className="size-4 text-neutral-500" strokeWidth={1.25} />
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column */}
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Ghana Card Number</label>
-            <input
-              type="text"
-              name="ghanaCardNumber"
-              value={formData.ghanaCardNumber}
-              onChange={handleInputChange}
+        {/* Right column */}
+        <div className="flex flex-col gap-[19px]">
+          <div className="flex flex-col gap-[9px]">
+            <FieldLabel htmlFor="pd-card">Ghana card number</FieldLabel>
+            <TextInput
+              id="pd-card"
+              value={form.ghanaCardNumber}
+              invalid={cardTouched && !cardValid}
+              onChange={(e) => update('ghanaCardNumber', e.target.value.toUpperCase().slice(0, 15))}
               placeholder="GHA-XXXXXXXXX-X"
-              maxLength={16}
-              className={`w-full h-10 px-4 bg-white rounded-lg border outline-none text-sm placeholder:text-neutral-300 transition-colors ${
-                ghanaCardError ? 'border-red-300 focus:border-red-400 bg-red-50/30' : 'border-neutral-200 focus:border-brand-gold-300'
-              }`}
+              maxLength={15}
+              autoComplete="off"
             />
-            {ghanaCardError && (
-              <p className="text-[11px] text-red-500 font-medium">{ghanaCardError}</p>
+            {cardTouched && !cardValid && (
+              <p className="text-[11px] text-brand-red-500">Format must be GHA-XXXXXXXXX-X (9 digits, then 1 digit).</p>
             )}
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Ghana Card Photo</label>
-            <input 
-              ref={fileInputRef}
+          <div className="flex flex-col gap-[11px]">
+            <FieldLabel>Ghana card photo</FieldLabel>
+            <input
+              ref={fileRef}
               type="file"
-              onChange={handleFileChange}
-              className="hidden"
               accept="image/*,.pdf"
+              className="hidden"
+              onChange={(e) => {
+                acceptFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
             />
-            {formData.ghanaCardPhoto ? (
-              <div className="w-full h-[90px] border border-neutral-200 rounded-lg bg-white p-5 flex items-center justify-between group">
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-bold text-neutral-700">{formData.ghanaCardPhoto.name}</span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[12px] text-neutral-400">{formData.ghanaCardPhoto.size}</span>
-                    <span className="text-[12px] text-emerald-600 font-bold">Ready</span>
-                  </div>
+            {form.ghanaCardPhoto ? (
+              <div className="h-[81px] bg-white border border-neutral-300 rounded-[10px] shadow-[0_1px_5.25px_rgba(0,0,0,0.03)] pl-[23px] pr-5 flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-[5px] min-w-0">
+                  <span className="text-[11px] font-semibold text-neutral-500 truncate">{form.ghanaCardPhoto.name}</span>
+                  <span className="flex items-center gap-3 text-[11px]">
+                    <span className="text-neutral-450">{form.ghanaCardPhoto.sizeLabel}</span>
+                    <span className="font-semibold text-brand-green-400">Completed</span>
+                  </span>
                 </div>
-                <button 
-                  onClick={removeFile}
-                  className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-red-50 text-neutral-300 hover:text-red-500 transition-all"
+                <button
+                  type="button"
+                  onClick={() => update('ghanaCardPhoto', null)}
+                  className="text-neutral-400 hover:text-brand-red-500 transition-colors shrink-0"
+                  aria-label="Remove Ghana card photo"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
+                  <Trash2 className="size-6" strokeWidth={1.5} />
                 </button>
               </div>
             ) : (
-              <div 
-                onClick={triggerFileSelect}
-                className="w-full h-[90px] border-2 border-dashed border-brand-gold-500 rounded-lg flex flex-col items-center justify-center gap-1 bg-brand-gold-50/20 cursor-pointer hover:bg-brand-gold-50/40 transition-colors"
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => fileRef.current?.click()}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  acceptFile(e.dataTransfer.files?.[0]);
+                }}
+                className={`h-[129px] rounded-lg border-[1.5px] border-dashed border-brand-gold-500 flex flex-col items-center justify-center gap-[3px] cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-gold-600/40 ${
+                  isDragging ? 'bg-brand-gold-50' : 'bg-brand-gold-50/16 hover:bg-brand-gold-50/40'
+                }`}
               >
-                <Upload className="w-5 h-5 text-brand-gold-500" />
-                <span className="text-neutral-500 text-[12px] font-medium">Click to upload or drag & drop</span>
+                <ImageUp className="size-6 text-brand-gold-700" strokeWidth={1.5} />
+                <span className="text-xs font-medium text-neutral-450">Click to upload or drag &amp; drop</span>
+                <span className="text-[10px] text-neutral-450">PDF, JPG or PNG&nbsp;&nbsp;Max 10MB</span>
               </div>
             )}
+            {photoError && <p className="text-[11px] text-brand-red-500">{photoError}</p>}
           </div>
         </div>
       </div>
 
-      {/* Footer Section */}
-      <div className="flex flex-col gap-6 border-t border-neutral-50 mt-8">
-        <div className="flex flex-col gap-2 max-w-xl pt-6">
-          <h4 className="text-[12px] font-bold text-neutral-600">Statutory declaration</h4>
-          <p className="text-[11px] text-neutral-400 leading-relaxed">
-            I confirm that all information and documents I submit are genuine and belong to me. I understand that submitting false documents is an offence under Ghanaian law and I accept full legal accountability for this submission.
-          </p>
-          <label className="flex items-center gap-2.5 cursor-pointer group mt-1">
-            <input 
-              type="checkbox"
-              name="agreed"
-              checked={formData.agreed}
-              onChange={handleInputChange}
-              className="hidden"
-            />
-            <div className={`w-4 h-4 rounded border-2 transition-colors flex items-center justify-center ${formData.agreed ? 'border-brand-gold-500 bg-brand-gold-500' : 'border-brand-gold-500 bg-white group-hover:bg-brand-gold-50'}`}>
-              {formData.agreed && (
-                <svg className="w-2.5 h-2.5 text-brand-navy-800 fill-current" viewBox="0 0 20 20">
-                  <path d="M0 11l2-2 5 5L18 3l2 2L7 18z" />
-                </svg>
-              )}
-            </div>
-            <span className="text-[11px] font-medium text-neutral-500">I agree to the above declaration</span>
-          </label>
-        </div>
-
-        <div className="flex justify-end pt-2 mb-4">
-          <button
-            onClick={() => onSave(formData)}
-            disabled={!formData.agreed || currentProgress < 100 || !!ghanaCardError}
-            className={`px-8 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm active:scale-95 ${
-              formData.agreed && currentProgress === 100 && !ghanaCardError
-                ? 'bg-brand-gold-500 hover:bg-brand-gold-600 text-brand-navy-800'
-                : 'bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none'
-            }`}
-          >
-            Save & continue
-          </button>
-        </div>
-      </div>
+      <StepFooter className="mt-8 md:mt-[50px]">
+        <PrimaryButton disabled={progress < 100} onClick={handleSave}>
+          Continue to documents
+        </PrimaryButton>
+      </StepFooter>
     </div>
   );
 };

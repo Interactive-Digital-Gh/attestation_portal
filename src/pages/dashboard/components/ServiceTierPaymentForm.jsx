@@ -1,232 +1,320 @@
-import React, { useState, useEffect } from 'react';
-import { CreditCard, ChevronDown, CheckCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { supabase } from '../../../supabaseClient';
+import { FieldLabel, PrimaryButton, CheckSquare, InfoBanner, PhonePrefix, TextInput, StepFooter } from './ui';
+import { formatGHS, formatLongDate, getEarliestAppointmentDate, getOfficerVerificationSummary } from '../documentTypes';
 
-const imgGhanaGh = "https://flagcdn.com/w40/gh.png";
+/** Fallback tiers (Figma values); overridden by active rows in `fees_config`. */
+const DEFAULT_TIERS = [
+  { key: 'Standard', price: 200, turnaround: '24 to 48 hours' },
+  { key: 'Express', price: 450, turnaround: '24 to 48 hours' },
+  { key: 'Premium', price: 800, turnaround: '24 to 48 hours' },
+];
+const NETWORKS = ['MTN MoMo', 'Telecel Cash', 'AirtelTigo Money'];
+/** Simulated gateway round-trip; see handlePay. */
+const PAYMENT_DELAY_MS = 1500;
 
-const ServiceTierPaymentForm = ({ onSave, onProgressUpdate, initialData }) => {
-  const [serviceTier, setServiceTier] = useState(initialData?.tier?.toLowerCase() || 'standard'); // 'standard' or 'express'
-  const [paymentMethod, setPaymentMethod] = useState('momo'); // 'momo' or 'card'
-  const [momoNetwork, setMomoNetwork] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('548902177');
-  const [cardName, setCardName] = useState('');
-  const [hasPaid, setHasPaid] = useState(!!initialData?.tier);
+const localDigits = (phone = '') => (phone || '').replace(/\D/g, '').replace(/^233/, '').replace(/^0/, '');
+const turnaroundLabel = (days) => (!days ? null : days === 1 ? '1 working day' : `Up to ${days} working days`);
+const joinList = (items) =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 
-  const pricing = {
-    standard: { label: 'Standard', time: '3 – 5 working days', price: 200 },
-    express: { label: 'Express', time: '24 to 48 hours', price: 450 }
+const SegButton = ({ active, children, ...rest }) => (
+  <button
+    type="button"
+    aria-pressed={active}
+    className={`h-11 w-[140px] rounded-md text-sm font-semibold transition-colors ${
+      active
+        ? 'bg-white border-[1.5px] border-brand-navy-500 text-brand-navy-500'
+        : 'bg-neutral-50 text-brand-navy-800 hover:bg-neutral-100'
+    }`}
+    {...rest}
+  >
+    {children}
+  </button>
+);
+
+const Field = ({ label, htmlFor, children }) => (
+  <div className="flex flex-col gap-[9px]">
+    <FieldLabel htmlFor={htmlFor}>{label}</FieldLabel>
+    {children}
+  </div>
+);
+
+/**
+ * Step 3 — Select service tier & pay.
+ * Pricing is per document; the selected tier card expands to show the order summary.
+ */
+const ServiceTierPaymentForm = ({ initialData, documents = [], profile, applicantName, onSave, onProgressUpdate }) => {
+  const [tiers, setTiers] = useState(DEFAULT_TIERS);
+  const [tier, setTier] = useState(initialData?.tier || null);
+  const [method, setMethod] = useState(initialData?.paymentMethod || 'momo');
+  const [network, setNetwork] = useState(initialData?.momoNetwork || '');
+  const [phone, setPhone] = useState(initialData?.momoPhoneLocal || localDigits(profile?.phone_number));
+  const [card, setCard] = useState({ name: initialData?.cardName || '', number: '', expiry: '', cvv: '' });
+  const [isPaying, setIsPaying] = useState(false);
+
+  // Merge admin-configured fees over the defaults.
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from('fees_config')
+      .select('tier, price_ghs, turnaround_days, is_active')
+      .then(({ data, error }) => {
+        if (cancelled || error || !data?.length) return;
+        const byName = Object.fromEntries(data.map((r) => [r.tier, r]));
+        const merged = DEFAULT_TIERS.filter((t) => byName[t.key]?.is_active !== false).map((t) => {
+          const row = byName[t.key];
+          return row
+            ? { key: t.key, price: Number(row.price_ghs), turnaround: turnaroundLabel(row.turnaround_days) || t.turnaround }
+            : t;
+        });
+        data
+          .filter((r) => r.is_active !== false && !DEFAULT_TIERS.some((t) => t.key === r.tier))
+          .forEach((r) =>
+            merged.push({ key: r.tier, price: Number(r.price_ghs), turnaround: turnaroundLabel(r.turnaround_days) || '24 to 48 hours' })
+          );
+        setTiers(merged);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const documentsCount = documents.length;
+  const selectedTier = tiers.find((t) => t.key === tier) || null;
+  const total = selectedTier ? selectedTier.price * documentsCount : 0;
+
+  const momoReady = !!network && phone.length >= 9;
+  // Simulated account-name lookup: the payer is the signed-in account holder.
+  const accountName = momoReady ? profile?.full_name || applicantName || '' : '';
+  const cardDigits = card.number.replace(/\s/g, '');
+  const cardReady = card.name.trim().length > 1 && cardDigits.length >= 16 && card.expiry.length >= 4 && card.cvv.length >= 3;
+  const canPay = !!selectedTier && documentsCount > 0 && (method === 'momo' ? momoReady : cardReady);
+
+  const progress = !selectedTier ? 0 : canPay ? 66 : 33;
+  useEffect(() => {
+    onProgressUpdate?.(progress);
+  }, [progress, onProgressUpdate]);
+
+  const earliest = getEarliestAppointmentDate(documents);
+  const { types, issuers } = getOfficerVerificationSummary(documents);
+
+  const handlePay = async () => {
+    if (!canPay) return;
+    setIsPaying(true);
+    // Payment gateway integration point: replace this delay with the provider's
+    // checkout call (e.g. Paystack / Hubtel) and only continue once it confirms.
+    await new Promise((resolve) => setTimeout(resolve, PAYMENT_DELAY_MS));
+    setIsPaying(false);
+    onSave({
+      tier: selectedTier.key,
+      ratePerDocument: selectedTier.price,
+      documentsCount,
+      total,
+      price: total,
+      currency: 'GHS',
+      paymentMethod: method,
+      momoNetwork: method === 'momo' ? network : null,
+      momoPhone: method === 'momo' ? `+233${phone}` : null,
+      momoPhoneLocal: method === 'momo' ? phone : null,
+      accountName: method === 'momo' ? accountName : null,
+      cardName: method === 'card' ? card.name.trim() : null,
+      cardLast4: method === 'card' ? cardDigits.slice(-4) : null,
+      paidAt: new Date().toISOString(),
+      reference: `PAY-${Date.now().toString(36).toUpperCase()}`,
+    });
   };
 
-  const totalPrice = pricing[serviceTier].price;
-
-  // Calculate progress
-  useEffect(() => {
-    let progress = 33; // Starting state (tier selected by default)
-    
-    if (paymentMethod === 'momo' && momoNetwork) progress = 66;
-    if (paymentMethod === 'card' && cardName) progress = 66;
-    if (hasPaid) progress = 100;
-
-    if (onProgressUpdate) {
-      onProgressUpdate(progress);
-    }
-  }, [serviceTier, paymentMethod, momoNetwork, cardName, hasPaid, onProgressUpdate]);
-
   return (
-    <div className="w-full bg-white animate-fade-in">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 xl:gap-x-14 gap-y-8">
-        {/* Left Column: Service Tier & Summary */}
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-4">
-            <div
-              onClick={() => setServiceTier('standard')}
-              className={`px-4 py-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 group ${
-                serviceTier === 'standard'
-                  ? 'bg-white border-brand-gold-500'
-                  : 'bg-[#F9F8F7] border-transparent'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className={`w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
-                  serviceTier === 'standard' ? 'border-brand-gold-500 bg-brand-gold-500' : 'border-neutral-200 bg-white'
-                }`}>
-                  {serviceTier === 'standard' && <div className="w-1.5 h-1.5 bg-[#0A1628] rounded-full" />}
-                </div>
-                <span className="text-[14px] font-bold text-neutral-800">Standard</span>
-              </div>
-              <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1 sm:gap-4 text-right sm:text-left">
-                <span className="text-[12px] text-neutral-400 font-medium">3 – 5 working days</span>
-                <span className="text-[14px] font-bold text-neutral-300">GHS 200</span>
-              </div>
-            </div>
-
-            <div
-              onClick={() => setServiceTier('express')}
-              className={`px-4 py-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between gap-3 group ${
-                serviceTier === 'express'
-                  ? 'bg-white border-brand-gold-500'
-                  : 'bg-[#F9F8F7] border-transparent'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className={`w-4 h-4 shrink-0 rounded-full border-2 flex items-center justify-center transition-colors ${
-                  serviceTier === 'express' ? 'border-brand-gold-500 bg-brand-gold-500' : 'border-neutral-200 bg-white'
-                }`}>
-                  {serviceTier === 'express' && <div className="w-1.5 h-1.5 bg-[#0A1628] rounded-full" />}
-                </div>
-                <span className="text-[14px] font-bold text-neutral-800">Express</span>
-              </div>
-              <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1 sm:gap-4 text-right sm:text-left">
-                <span className="text-[12px] text-neutral-400 font-medium">24 to 48 hours</span>
-                <span className="text-[14px] font-bold text-neutral-300">GHS 450</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Order Summary */}
-          <div className="bg-[#0A1628] text-white rounded-xl p-6 mt-2 flex flex-col relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-8 opacity-5">
-              <CreditCard className="w-24 h-24" />
-            </div>
-            <h4 className="text-[12px] font-bold text-white uppercase tracking-[0.2em] mb-10 opacity-60">ORDER SUMMARY</h4>
-            <div className="flex flex-col gap-5 flex-grow relative z-10">
-              <div className="flex items-center justify-between">
-                <span className="text-[14px] text-neutral-400">Status</span>
-                <span className={`text-[14px] font-bold ${hasPaid ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {hasPaid ? 'Payment Confirmed' : 'Awaiting Payment'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[14px] text-neutral-400">Service tier</span>
-                <span className="text-[14px] font-medium">{pricing[serviceTier].label}</span>
-              </div>
-            </div>
-            <div className="pt-6 border-t border-white/10 flex items-center justify-between relative z-10">
-              <span className="text-[15px] font-medium text-neutral-400">Total</span>
-              <span className="text-[18px] font-black text-brand-gold-500">GHS {totalPrice}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Payment Method */}
-        <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-5">
-            <h4 className="text-[14px] font-bold text-brand-navy-800">Payment method</h4>
-            
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setPaymentMethod('momo')}
-                className={`flex-1 h-10 rounded-lg text-sm font-bold transition-all ${
-                  paymentMethod === 'momo' ? 'bg-[#0A1628] text-white' : 'bg-[#F9F8F7] text-neutral-500 hover:bg-neutral-100'
+    <div className="flex flex-col gap-[19px]">
+      <div className="flex flex-col lg:flex-row lg:justify-between gap-8 lg:gap-12">
+        {/* Tier list */}
+        <div role="radiogroup" aria-label="Service tier" className="w-full lg:max-w-[495px] flex flex-col gap-[10px]">
+          {tiers.map((t) => {
+            const isSelected = tier === t.key;
+            return (
+              <div
+                key={t.key}
+                role="radio"
+                aria-checked={isSelected}
+                tabIndex={0}
+                onClick={() => setTier(t.key)}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTier(t.key)}
+                className={`rounded-[10px] border px-[15px] py-5 cursor-pointer transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-navy-400/40 ${
+                  isSelected ? 'bg-white border-brand-navy-400' : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300'
                 }`}
               >
-                Mobile Money
-              </button>
-              <button
-                onClick={() => setPaymentMethod('card')}
-                className={`flex-1 h-10 rounded-lg text-sm font-bold transition-all ${
-                  paymentMethod === 'card' ? 'bg-[#0A1628] text-white' : 'bg-[#F9F8F7] text-neutral-500 hover:bg-neutral-100'
-                }`}
-              >
-                Credit Card
-              </button>
-            </div>
-
-            {/* MOMO Form */}
-            {paymentMethod === 'momo' && (
-              <div className="flex flex-col gap-6 animate-fade-in mt-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">MOBILE NETWORK</label>
-                  <div className="relative group">
-                    <select 
-                      value={momoNetwork}
-                      onChange={(e) => setMomoNetwork(e.target.value)}
-                      className="w-full h-11 px-4 bg-white rounded-lg border border-neutral-200 outline-none text-sm appearance-none cursor-pointer text-neutral-800 font-medium focus:border-brand-gold-500 transition-colors"
-                    >
-                      <option value="">Select network</option>
-                      <option value="mtn">MTN MoMo</option>
-                      <option value="vodafone">Vodafone Cash</option>
-                      <option value="airteltigo">AirtelTigo Money</option>
-                    </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
-                      <ChevronDown className="w-3 h-3" />
+                <div className={`flex items-start justify-between gap-4 ${isSelected ? 'pb-2 border-b border-neutral-100' : ''}`}>
+                  <div className="flex items-start gap-[5px]">
+                    <CheckSquare checked={isSelected} />
+                    <div className="flex flex-col gap-[3px]">
+                      <span className="text-sm font-medium text-neutral-700">{t.key}</span>
+                      <span className="text-xs text-neutral-600">{t.turnaround}</span>
                     </div>
+                  </div>
+                  <div className="flex flex-col gap-[3px] items-end text-right">
+                    <span className="text-sm font-semibold text-neutral-600">{formatGHS(t.price)}</span>
+                    <span className="text-xs font-medium text-neutral-400">per document</span>
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-2">
-                  <label className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">PHONE NUMBER</label>
-                  <div className="flex h-11 rounded-lg border border-neutral-200 overflow-hidden focus-within:border-brand-gold-500 transition-colors">
-                    <div className="w-[95px] h-full bg-[#F0EFEE] flex items-center justify-center gap-1.5 border-r border-neutral-100">
-                      <img src={imgGhanaGh} className="w-[18px] h-auto object-contain" alt="Ghana Flag" />
-                      <span className="text-[13px] font-medium text-neutral-400">+233</span>
+                {isSelected && (
+                  <div className="pt-[14px] pb-2 flex flex-col gap-[21px] text-xs animate-fade-in">
+                    <span className="font-semibold uppercase text-neutral-400">Order summary</span>
+                    <div className="flex flex-col gap-3">
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Documents</span>
+                        <span className="text-neutral-700">{documentsCount}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-400">Rate per document</span>
+                        <span className="text-neutral-700">{t.price}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium text-neutral-400">Total</span>
+                        <span className="font-semibold text-neutral-700">{formatGHS(total)}</span>
+                      </div>
                     </div>
-                    <input 
-                      type="text" 
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      className="flex-grow px-4 outline-none text-sm font-medium text-neutral-800"
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Payment column */}
+        {selectedTier && (
+          <div className="w-full lg:max-w-[431px] flex flex-col gap-[18px] animate-fade-in">
+            <h4 className="text-sm font-semibold text-neutral-700">Payment method</h4>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-[15px]">
+                <SegButton active={method === 'momo'} onClick={() => setMethod('momo')}>
+                  Mobile money
+                </SegButton>
+                <SegButton active={method === 'card'} onClick={() => setMethod('card')}>
+                  Credit card
+                </SegButton>
+              </div>
+
+              {method === 'momo' ? (
+                <>
+                  <Field label="Mobile network" htmlFor="pay-network">
+                    <div className="relative">
+                      <select
+                        id="pay-network"
+                        value={network}
+                        onChange={(e) => setNetwork(e.target.value)}
+                        className={`w-full h-11 rounded-md border border-neutral-200 bg-white pl-4 pr-11 text-sm appearance-none outline-none focus:border-brand-navy-400 ${
+                          network ? 'text-neutral-600' : 'text-neutral-300'
+                        }`}
+                      >
+                        <option value="" disabled>
+                          Select network
+                        </option>
+                        {NETWORKS.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown
+                        className="absolute right-[15px] top-1/2 -translate-y-1/2 size-6 text-neutral-400 pointer-events-none"
+                        strokeWidth={1.5}
+                      />
+                    </div>
+                  </Field>
+
+                  <Field label="Phone number" htmlFor="pay-phone">
+                    <div className="flex h-11 rounded-md border border-neutral-200 bg-white overflow-hidden focus-within:border-brand-navy-400">
+                      <PhonePrefix />
+                      <input
+                        id="pay-phone"
+                        type="tel"
+                        inputMode="numeric"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 9))}
+                        placeholder="548902177"
+                        className="flex-1 min-w-0 h-full px-3 text-sm outline-none text-neutral-600 placeholder:text-neutral-300"
+                      />
+                    </div>
+                  </Field>
+
+                  <Field label="Name on account" htmlFor="pay-account">
+                    <TextInput id="pay-account" readOnly value={accountName} placeholder="Display account name" />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Name on card" htmlFor="pay-card-name">
+                    <TextInput
+                      id="pay-card-name"
+                      value={card.name}
+                      onChange={(e) => setCard((c) => ({ ...c, name: e.target.value }))}
+                      placeholder="Name on card"
+                      autoComplete="cc-name"
                     />
+                  </Field>
+                  <Field label="Card number" htmlFor="pay-card-number">
+                    <TextInput
+                      id="pay-card-number"
+                      inputMode="numeric"
+                      value={card.number}
+                      onChange={(e) =>
+                        setCard((c) => ({
+                          ...c,
+                          number: e.target.value.replace(/\D/g, '').slice(0, 19).replace(/(\d{4})(?=\d)/g, '$1 '),
+                        }))
+                      }
+                      placeholder="0000 0000 0000 0000"
+                      autoComplete="cc-number"
+                      className="tracking-[0.08em]"
+                    />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-[15px]">
+                    <Field label="Expiry" htmlFor="pay-card-expiry">
+                      <TextInput
+                        id="pay-card-expiry"
+                        inputMode="numeric"
+                        value={card.expiry}
+                        onChange={(e) =>
+                          setCard((c) => ({ ...c, expiry: e.target.value.replace(/\D/g, '').slice(0, 4).replace(/(\d{2})(?=\d)/, '$1/') }))
+                        }
+                        placeholder="MM/YY"
+                        autoComplete="cc-exp"
+                      />
+                    </Field>
+                    <Field label="CVV" htmlFor="pay-card-cvv">
+                      <TextInput
+                        id="pay-card-cvv"
+                        inputMode="numeric"
+                        type="password"
+                        value={card.cvv}
+                        onChange={(e) => setCard((c) => ({ ...c, cvv: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                        placeholder="•••"
+                        autoComplete="cc-csc"
+                      />
+                    </Field>
                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* Card Form */}
-            {paymentMethod === 'card' && (
-              <div className="flex flex-col gap-6 animate-fade-in mt-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">NAME ON CARD</label>
-                  <input 
-                    type="text" 
-                    value={cardName}
-                    onChange={(e) => setCardName(e.target.value)}
-                    placeholder="Name on card"
-                    className="w-full h-11 px-4 bg-white rounded-lg border border-neutral-200 outline-none text-sm placeholder:text-neutral-200 font-medium text-neutral-800 focus:border-brand-gold-500 transition-colors"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">CARD NUMBER</label>
-                  <input 
-                    type="text" 
-                    placeholder="0000 0000 0000 0000"
-                    className="w-full h-11 px-4 bg-white rounded-lg border border-neutral-200 outline-none text-sm placeholder:text-neutral-200 font-medium text-neutral-800 tracking-[0.1em]"
-                  />
-                </div>
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
-
-          <button 
-            onClick={() => {
-              if (!hasPaid) {
-                setHasPaid(true);
-              } else {
-                onSave({ 
-                  tier: pricing[serviceTier].label, 
-                  price: totalPrice,
-                  paymentMethod,
-                  momoNetwork: paymentMethod === 'momo' ? momoNetwork : null,
-                  momoPhone: paymentMethod === 'momo' ? phoneNumber : null,
-                  cardName: paymentMethod === 'card' ? cardName : null
-                });
-              }
-            }}
-            className={`w-full h-[54px] rounded-lg text-[15px] font-bold transition-all mt-6 flex items-center justify-center gap-2.5 shadow-md active:scale-[0.98] ${
-              hasPaid 
-                ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-200' 
-                : 'bg-brand-gold-500 text-brand-navy-800 hover:bg-brand-gold-600 shadow-brand-gold-100'
-            }`}
-          >
-            {hasPaid ? (
-              <>
-                <CheckCircle className="w-5 h-5" />
-                <span>Payment Confirmed — Continue</span>
-              </>
-            ) : `Pay GHS ${totalPrice}`}
-          </button>
-        </div>
+        )}
       </div>
+
+      {selectedTier && earliest && types.length > 0 && (
+        <InfoBanner>
+          <span className="font-semibold">Earliest appointment: {formatLongDate(earliest)}.</span> Held by your {joinList(types)},
+          which {types.length > 1 ? 'need' : 'needs'} confirmation from {joinList(issuers)}.
+        </InfoBanner>
+      )}
+
+      <StepFooter className="mt-1">
+        <PrimaryButton disabled={!canPay} loading={isPaying} onClick={handlePay}>
+          {isPaying ? 'Processing payment…' : 'Proceed to pay'}
+        </PrimaryButton>
+      </StepFooter>
     </div>
   );
 };
