@@ -1,17 +1,49 @@
 @import "tailwindcss";
 
 @theme {
+  /* Brand navy (Figma brand/navy scale; 500 is the primary button / heading navy) */
+  --color-brand-navy-50: #e8ecf2;
+  --color-brand-navy-200: #9aaec8;
+  --color-brand-navy-400: #4a7098;
+  --color-brand-navy-500: #0a1628;
+  --color-brand-navy-600: #1a2e4a;
   --color-brand-navy-700: #0d1f36;
   --color-brand-navy-800: #081524;
+  --color-brand-navy-900: #0a1628;
+
+  /* Brand gold */
+  --color-brand-gold-50: #fffce5;
+  --color-brand-gold-100: #fef6b8;
+  --color-brand-gold-300: #fde65c;
   --color-brand-gold-500: #fcd116;
+  --color-brand-gold-600: #e3bc14;
   --color-brand-gold-700: #caa712;
   --color-brand-gold-800: #a8870e;
 
-  --color-neutral-800: #242220;
-  --color-neutral-600: #514f4b;
-  --color-neutral-500: #76746f;
-  --color-neutral-400: #9e9c99;
+  /* Brand green */
+  --color-brand-green-50: #e5f4ed;
+  --color-brand-green-100: #b8e2ce;
+  --color-brand-green-200: #8acfaf;
+  --color-brand-green-400: #2ea971;
+  --color-brand-green-500: #006b3f;
+  --color-brand-green-600: #005733;
+  --color-brand-green-800: #004728;
+
+  /* Brand red */
+  --color-brand-red-100: #f5bdc4;
+  --color-brand-red-500: #ce1126;
+
+  /* Neutral scale (matches Figma neutral/*) */
+  --color-neutral-50: #f9f8f7;
   --color-neutral-100: #f0efee;
+  --color-neutral-200: #e2e1df;
+  --color-neutral-300: #c8c6c3;
+  --color-neutral-400: #9e9c99;
+  --color-neutral-450: #908e8a;
+  --color-neutral-500: #76746f;
+  --color-neutral-600: #514f4b;
+  --color-neutral-700: #3a3835;
+  --color-neutral-800: #242220;
 
   --font-inter: "Inter", sans-serif;
 }

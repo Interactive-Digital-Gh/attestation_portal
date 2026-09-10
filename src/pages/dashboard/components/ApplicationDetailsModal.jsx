@@ -1,10 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import { X, FileText, Calendar, CreditCard, User, Download, ExternalLink, Printer, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, FileText, Calendar, CreditCard, User, ExternalLink, Printer, Clock } from 'lucide-react';
 import MoFACrest from '../../../assets/images/Logo_crest.png';
 import { supabase } from '../../../supabaseClient';
 import StatusTimeline from '../../../components/StatusTimeline';
 
 const ApplicationDetailsModal = ({ application, onClose }) => {
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    if (!application?.id) return;
+    supabase
+      .from('application_status_history')
+      .select('*')
+      .eq('application_id', application.id)
+      .order('changed_at', { ascending: true })
+      .then(({ data }) => setHistory(data || []));
+  }, [application?.id]);
+
   if (!application) return null;
 
   const getStatusStyle = (status) => {
@@ -22,18 +34,6 @@ const ApplicationDetailsModal = ({ application, onClose }) => {
         return 'bg-neutral-100 text-neutral-600 border-neutral-200';
     }
   };
-
-  const [history, setHistory] = useState([]);
-
-  useEffect(() => {
-    if (!application?.id) return;
-    supabase
-      .from('application_status_history')
-      .select('*')
-      .eq('application_id', application.id)
-      .order('changed_at', { ascending: true })
-      .then(({ data }) => setHistory(data || []));
-  }, [application?.id]);
 
   const handlePrint = () => {
     window.print();

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../../../supabaseClient';
+import { supabase, signInResilient } from '../../../supabaseClient';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import 'react-phone-number-input/style.css';
 import PhoneInput from 'react-phone-number-input';
@@ -22,7 +22,7 @@ const LoginSection = ({ onBack, onSignUp, onSuccess, onForgotPassword }) => {
         ? { email, password }
         : { phone: email, password };
 
-      const { data, error: loginError } = await supabase.auth.signInWithPassword(credentials);
+      const { data, error: loginError } = await signInResilient(() => supabase.auth.signInWithPassword(credentials));
 
       if (loginError) throw loginError;
 

@@ -25,6 +25,10 @@ import PortalSettings from './admin/pages/Configuration/PortalSettings';
 import FeesAndTiers from './admin/pages/Configuration/FeesAndTiers';
 import SmsNotifications from './admin/pages/Configuration/SmsNotifications';
 import SupportTickets from './admin/pages/Support/SupportTickets';
+
+// Dev-only preview of applicant screens; the dynamic import is dropped from production bundles.
+const PreviewPage = import.meta.env.DEV ? React.lazy(() => import('./dev/PreviewPage')) : null;
+
 function App() {
   return (
     <AuthProvider>
@@ -84,6 +88,18 @@ function App() {
               <Route path="invoices" element={<InvoicesPage />} />
               <Route path="track-status" element={<TrackStatusPage />} />
             </Route>
+
+            {/* Dev-only visual preview of applicant screens (never bundled in production) */}
+            {PreviewPage && (
+              <Route
+                path="/__preview/*"
+                element={
+                  <React.Suspense fallback={null}>
+                    <PreviewPage />
+                  </React.Suspense>
+                }
+              />
+            )}
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/login" replace />} />

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, Loader2, X, CheckCircle2 } from 'lucide-react';
-import { supabase } from '../../../../supabaseClient';
+import { supabase, signInResilient, signOutQuietly } from '../../../../supabaseClient';
 import LogoCrest from '../../../../assets/images/Logo_crest.png';
 
 const AdminAuthSection = () => {
@@ -21,10 +21,9 @@ const AdminAuthSection = () => {
 
     try {
       // Authenticate with Supabase
-      const { data, error: loginError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error: loginError } = await signInResilient(() =>
+        supabase.auth.signInWithPassword({ email, password })
+      );
 
       if (loginError) throw loginError;
 
@@ -40,12 +39,12 @@ const AdminAuthSection = () => {
         .single();
 
       if (profileError || !profile) {
-        await supabase.auth.signOut();
+        await signOutQuietly();
         throw new Error('Could not verify your account role. Contact IT support.');
       }
 
       if (profile.role !== 'admin') {
-        await supabase.auth.signOut();
+        await signOutQuietly();
         throw new Error('Unauthorized — this portal is for system administrators only.');
       }
 
